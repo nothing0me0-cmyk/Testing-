@@ -10,42 +10,43 @@ local PlayerMouse = Player:GetMouse()
 local Workspace = game:GetService("Workspace")
 
 -- ============================================
--- 3D SURFACE GUI CONFIGURATION
+-- 3D BILLBOARD GUI CONFIGURATION
 -- ============================================
 local CONFIG = {
-    SurfaceGuiSize = Vector2.new(800, 550),
-    PartSize = Vector3.new(8, 5.5, 0.2),
-    PartPosition = Vector3.new(0, 5, -10),
+    Distance = 5,              -- Studs in front of player
+    Height = 1.5,              -- Height offset from character
+    Size = UDim2.new(0, 550, 0, 380),  -- UI size in pixels
     ToggleKey = Enum.KeyCode.RightShift,
-    AnimationSpeed = 0.4,
+    AnimationSpeed = 0.3,
+    FollowSpeed = 0.12,        -- How fast UI follows player (0-1)
 }
 
 -- ============================================
--- 3D PART & SURFACE GUI SETUP
+-- 3D BILLBOARD GUI SETUP
 -- ============================================
-local UIPart = Instance.new("Part")
-UIPart.Name = "Redz3D_UI_Panel"
-UIPart.Size = CONFIG.PartSize
-UIPart.Anchored = true
-UIPart.CanCollide = false
-UIPart.CanQuery = false
-UIPart.CanTouch = false
-UIPart.Transparency = 1
-UIPart.Parent = Workspace
 
-local SurfaceGui = Instance.new("SurfaceGui")
-SurfaceGui.Name = "Redz3D_Surface"
-SurfaceGui.Adornee = UIPart
-SurfaceGui.Face = Enum.NormalId.Front
-SurfaceGui.CanvasSize = CONFIG.SurfaceGuiSize
-SurfaceGui.LightInfluence = 0
-SurfaceGui.Brightness = 1
-SurfaceGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-SurfaceGui.ResetOnSpawn = false
-SurfaceGui.Parent = CoreGui
+-- Create attachment point in workspace
+local UIAttachment = Instance.new("Attachment")
+UIAttachment.Name = "Redz3D_Attachment"
+UIAttachment.Parent = Workspace.Terrain
+
+-- Create BillboardGui
+local BillboardGui = Instance.new("BillboardGui")
+BillboardGui.Name = "Redz3D_Billboard"
+BillboardGui.Adornee = UIAttachment
+BillboardGui.Size = CONFIG.Size
+BillboardGui.StudsOffset = Vector3.new(0, 0, 0)
+BillboardGui.AlwaysOnTop = false
+BillboardGui.LightInfluence = 0
+BillboardGui.Brightness = 1.5
+BillboardGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+BillboardGui.ResetOnSpawn = false
+BillboardGui.Active = true
+BillboardGui.ClipsDescendants = false
+BillboardGui.Parent = CoreGui
 
 -- ============================================
--- SCREEN TOGGLE BUTTON (Always Visible)
+-- SCREEN TOGGLE BUTTON
 -- ============================================
 local ToggleScreenGui = Instance.new("ScreenGui")
 ToggleScreenGui.Name = "Redz3D_Toggle"
@@ -55,8 +56,8 @@ ToggleScreenGui.Parent = CoreGui
 
 local ToggleButton = Instance.new("TextButton")
 ToggleButton.Name = "Toggle3DUI"
-ToggleButton.Size = UDim2.new(0, 120, 0, 40)
-ToggleButton.Position = UDim2.new(0, 20, 0.5, -20)
+ToggleButton.Size = UDim2.new(0, 130, 0, 42)
+ToggleButton.Position = UDim2.new(0, 15, 0.5, -21)
 ToggleButton.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
 ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 ToggleButton.Text = "Open 3D UI"
@@ -86,25 +87,62 @@ ToggleButton.MouseLeave:Connect(function()
 end)
 
 -- ============================================
--- 3D UI STATE MANAGEMENT
+-- 3D POSITIONING SYSTEM
 -- ============================================
 local IsUIOpen = false
 local IsAnimating = false
-local HiddenPosition = CONFIG.PartPosition - Vector3.new(0, 50, 0)
-local OpenPosition = CONFIG.PartPosition + Vector3.new(0, 0, 5)
+local TargetWorldPos = Vector3.new(0, -500, 0)
+local CurrentWorldPos = Vector3.new(0, -500, 0)
+
+local function GetCharacterHRP()
+    local char = Player.Character
+    if not char then return nil end
+    return char:FindFirstChild("HumanoidRootPart")
+end
+
+local function CalculateTargetPosition()
+    local hrp = GetCharacterHRP()
+    if not hrp then return nil end
+
+    local charPos = hrp.Position
+    local charLook = hrp.CFrame.LookVector
+    local charRight = hrp.CFrame.RightVector
+
+    -- Position: in front, slightly to the right, and up
+    local offset = (charLook * CONFIG.Distance) + (charRight * 1.5) + Vector3.new(0, CONFIG.Height, 0)
+    return charPos + offset
+end
 
 local function OpenUI()
     if IsAnimating then return end
     IsAnimating = true
     IsUIOpen = true
     ToggleButton.Text = "Close 3D UI"
-    UIPart.Position = HiddenPosition
-    UIPart.Transparency = 0.1
-    local Tween = TweenService:Create(UIPart, TweenInfo.new(CONFIG.AnimationSpeed, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Position = OpenPosition
-    })
-    Tween:Play()
-    Tween.Completed:Wait()
+
+    local targetPos = CalculateTargetPosition()
+    if targetPos then
+        -- Snap to position below first
+        TargetWorldPos = targetPos
+        CurrentWorldPos = targetPos - Vector3.new(0, 15, 0)
+        UIAttachment.WorldPosition = CurrentWorldPos
+
+        -- Tween up
+        local startPos = CurrentWorldPos
+        local endPos = targetPos
+        local startTime = tick()
+
+        while tick() - startTime < CONFIG.AnimationSpeed do
+            local alpha = (tick() - startTime) / CONFIG.AnimationSpeed
+            alpha = math.sin(alpha * math.pi * 0.5) -- Ease out
+            CurrentWorldPos = startPos:Lerp(endPos, alpha)
+            UIAttachment.WorldPosition = CurrentWorldPos
+            RunService.RenderStepped:Wait()
+        end
+
+        CurrentWorldPos = endPos
+        UIAttachment.WorldPosition = CurrentWorldPos
+    end
+
     IsAnimating = false
 end
 
@@ -113,12 +151,22 @@ local function CloseUI()
     IsAnimating = true
     IsUIOpen = false
     ToggleButton.Text = "Open 3D UI"
-    local Tween = TweenService:Create(UIPart, TweenInfo.new(CONFIG.AnimationSpeed, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
-        Position = HiddenPosition,
-        Transparency = 1
-    })
-    Tween:Play()
-    Tween.Completed:Wait()
+
+    local startPos = CurrentWorldPos
+    local endPos = startPos - Vector3.new(0, 20, 0)
+    local startTime = tick()
+
+    while tick() - startTime < CONFIG.AnimationSpeed do
+        local alpha = (tick() - startTime) / CONFIG.AnimationSpeed
+        alpha = alpha * alpha -- Ease in
+        CurrentWorldPos = startPos:Lerp(endPos, alpha)
+        UIAttachment.WorldPosition = CurrentWorldPos
+        RunService.RenderStepped:Wait()
+    end
+
+    CurrentWorldPos = Vector3.new(0, -500, 0)
+    UIAttachment.WorldPosition = CurrentWorldPos
+
     IsAnimating = false
 end
 
@@ -132,19 +180,23 @@ UserInputService.InputBegan:Connect(function(Input, GameProcessed)
     if Input.KeyCode == CONFIG.ToggleKey then ToggleUI() end
 end)
 
-RunService.Heartbeat:Connect(function()
-    if IsUIOpen and Player.Character then
-        local HRP = Player.Character:FindFirstChild("HumanoidRootPart")
-        if HRP then
-            UIPart.CFrame = CFrame.new(UIPart.Position) * CFrame.Angles(0, math.rad(180), 0)
-        end
+-- Smooth follow system
+RunService.RenderStepped:Connect(function()
+    if not IsUIOpen or IsAnimating then return end
+
+    local targetPos = CalculateTargetPosition()
+    if targetPos then
+        TargetWorldPos = targetPos
+        CurrentWorldPos = CurrentWorldPos:Lerp(TargetWorldPos, CONFIG.FollowSpeed)
+        UIAttachment.WorldPosition = CurrentWorldPos
     end
 end)
 
-UIPart.Position = HiddenPosition
+-- Hide initially
+UIAttachment.WorldPosition = Vector3.new(0, -500, 0)
 
--- Use SurfaceGui as the main UI container
-local ScreenGui = SurfaceGui
+-- Use BillboardGui as the main UI container
+local ScreenGui = BillboardGui
 
 local function GetStr(val)
 	if type(val) == "function" then
